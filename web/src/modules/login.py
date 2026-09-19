@@ -139,10 +139,11 @@ _MOBILE_QR_SESSIONS: dict[str, _MobileQRSession] = {}
 async def _watch_mobile_qrcode(
     engine: RequestEngine,
     qrcode: QR,
+    credential_pool: CredentialPool | None,
 ) -> None:
     """
-    在服务器后台保持 QQ音乐 MQTT 连接，
-    并把最新扫码状态保存起来，供 HTTP status 接口查询。
+    后台监听 QQ音乐 App 扫码状态。
+    登录成功后自动把 Credential 写入共享凭证池。
     """
 
     scope = RequestScope(
@@ -155,17 +156,31 @@ async def _watch_mobile_qrcode(
 
     try:
         async for result in login_api.checking_mobile_qrcode(qrcode):
+
             session = _MOBILE_QR_SESSIONS.get(qrcode.identifier)
 
             if session is None:
                 return
 
+            # 保存当前扫码状态
             session.result = result
+
+            # QQ音乐登录成功
+            if (
+                result.event == QRCodeLoginEvents.DONE
+                and result.credential is not None
+            ):
+                # 自动写进共享 Credential 池
+                if credential_pool is not None:
+                    await credential_pool.seed(result.credential)
+
+                return
 
     except asyncio.CancelledError:
         raise
 
     except Exception as exc:
+
         session = _MOBILE_QR_SESSIONS.get(qrcode.identifier)
 
         if session is not None:
@@ -299,12 +314,15 @@ async def qrcode_adapter(context: RouteContext) -> QRCodeData:
 
         _MOBILE_QR_SESSIONS[qrcode.identifier] = session
 
-        session.task = asyncio.create_task(
-            _watch_mobile_qrcode(
-                context.engine,
-                qrcode,
-            )
-        )
+        credential_pool = get_credential_pool(context.request)
+
+session.task = asyncio.create_task(
+    _watch_mobile_qrcode(
+        context.engine,
+        qrcode,
+        credential_pool,
+    )
+)
 
     return _serialize_qrcode(qrcode)
 
