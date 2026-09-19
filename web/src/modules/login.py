@@ -293,7 +293,6 @@ async def qrcode_adapter(context: RouteContext) -> QRCodeData:
     )
 
     if login_type == QRLoginType.MOBILE:
-
         old_session = _MOBILE_QR_SESSIONS.get(
             qrcode.identifier
         )
@@ -316,13 +315,13 @@ async def qrcode_adapter(context: RouteContext) -> QRCodeData:
 
         credential_pool = get_credential_pool(context.request)
 
-session.task = asyncio.create_task(
-    _watch_mobile_qrcode(
-        context.engine,
-        qrcode,
-        credential_pool,
-    )
-)
+        session.task = asyncio.create_task(
+            _watch_mobile_qrcode(
+                context.engine,
+                qrcode,
+                credential_pool,
+            )
+        )
 
     return _serialize_qrcode(qrcode)
 
