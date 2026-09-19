@@ -180,7 +180,7 @@ async def _watch_mobile_qrcode(
     except asyncio.CancelledError:
         raise
 
-        except Exception as exc:
+    except Exception as exc:
         print(
             f"[QQ MOBILE QR ERROR] {type(exc).__name__}: {exc}",
             flush=True,
