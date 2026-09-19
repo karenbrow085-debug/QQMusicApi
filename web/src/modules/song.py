@@ -5,7 +5,8 @@ from typing import Annotated, Any, TypeAlias
 from pydantic import BaseModel, BeforeValidator, Field, WithJsonSchema, model_validator
 from pydantic.json_schema import SkipJsonSchema
 from typing_extensions import Self
-
+from qqmusic_api.core.exceptions import CredentialExpiredError
+from ..core.deps import get_credential_pool
 from qqmusic_api.modules.song import (
     BaseSongFileType,
     EncryptedSongFileType,
@@ -102,17 +103,62 @@ class QuerySongRequest(BaseModel):
 
     query_info: list[SongQueryItem] = Field(min_length=1, description="歌曲查询信息列表.")
 
+async def _get_song_urls_with_refresh(
+    context: RouteContext,
+    file_info,
+    file_type,
+):
+    credential = context.credential
+    pool = get_credential_pool(context.request)
+    pooled = None
 
+    if pool is not None and credential is not None and credential.musicid:
+        for item in pool.acquire():
+            if item.musicid == credential.musicid:
+                pooled = item
+
+                if item.credential.musickey != credential.musickey:
+                    credential = item.credential
+
+                break
+
+    try:
+        return await context.execute_module(
+            SongApi,
+            SongApi.get_song_urls,
+            file_info=file_info,
+            file_type=file_type,
+            credential=credential,
+        )
+
+    except CredentialExpiredError:
+        if pool is None or pooled is None:
+            raise
+
+        refreshed = await pool.refresh(
+            pooled,
+            context.engine,
+        )
+
+        if refreshed is None:
+            raise
+
+        return await context.execute_module(
+            SongApi,
+            SongApi.get_song_urls,
+            file_info=file_info,
+            file_type=file_type,
+            credential=refreshed.credential,
+        )
 @adapter("song", "get_song_urls")
 async def get_song_urls_adapter(context: RouteContext):
     """批量获取歌曲文件链接."""
     body = context.params["body"]
-    return await context.execute_module(
-        SongApi,
-        SongApi.get_song_urls,
-        file_info=[item.to_sdk() for item in body.file_info],
-        file_type=body.file_type,
-        credential=context.credential,
+
+    return await _get_song_urls_with_refresh(
+        context,
+        [item.to_sdk() for item in body.file_info],
+        body.file_type,
     )
 
 
@@ -129,18 +175,19 @@ async def get_fav_num_by_id_adapter(context: RouteContext):
 @adapter("song", "get_song_url")
 async def get_song_url_adapter(context: RouteContext):
     """根据单个歌曲 MID 获取文件链接."""
-    return await context.execute_module(
-        SongApi,
-        SongApi.get_song_urls,
-        file_info=[
-            SongUrlItem(
-                mid=context.params["mid"],
-                song_type=context.params.get("song_type"),
-                media_mid=context.params.get("media_mid"),
-            ).to_sdk()
-        ],
-        file_type=context.params["file_type"],
-        credential=context.credential,
+
+    file_info = [
+        SongUrlItem(
+            mid=context.params["mid"],
+            song_type=context.params.get("song_type"),
+            media_mid=context.params.get("media_mid"),
+        ).to_sdk()
+    ]
+
+    return await _get_song_urls_with_refresh(
+        context,
+        file_info,
+        context.params["file_type"],
     )
 
 
