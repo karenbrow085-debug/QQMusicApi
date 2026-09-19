@@ -87,6 +87,19 @@ class CredentialPool:
         """关闭底层存储."""
         self._store.close()
 
+    async def seed(self, credential: Credential) -> None:
+    """保存扫码登录得到的 Credential 到共享凭证池."""
+
+    if not credential_has_login(credential):
+        raise ValueError("Credential 缺少 musicid 或 musickey")
+
+    await run_sync(self._store.seed, credential)
+
+    logger.info(
+        "扫码登录凭证已保存到共享池: musicid %s",
+        credential.musicid,
+    )
+    
     def acquire(self) -> tuple[PoolCredential, ...]:
         """按随机顺序返回池内有效凭证快照."""
         return tuple(
