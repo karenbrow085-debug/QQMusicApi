@@ -271,9 +271,25 @@ def _build_qrcode_placeholder(identifier: str, login_type: QRLoginType) -> QR:
 
 @adapter("login", "check_expired")
 async def check_expired_adapter(context: RouteContext) -> bool:
-    """检查登录凭证是否过期."""
+    """检查登录凭证是否仍然有效."""
     credential = context.credential or Credential()
-    return await context.execute_module("login", "check_expired", credential)
+
+    expired = await context.execute_module(
+        "login",
+        "check_expired",
+        credential,
+    )
+
+    # SDK 的语义：
+    # True  = 凭证已过期
+    # False = 凭证仍有效
+    #
+    # 但 Web 层的 bool 响应语义：
+    # True  = code 0 / 成功
+    # False = code -1 / “操作失败”
+    #
+    # 所以这里必须反转。
+    return not expired
 
 @adapter("login", "refresh_credential")
 async def refresh_credential_adapter(context: RouteContext) -> Credential:
