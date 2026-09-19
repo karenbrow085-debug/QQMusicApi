@@ -108,48 +108,81 @@ async def _get_song_urls_with_refresh(
     file_info,
     file_type,
 ):
+    """获取歌曲地址, 输出不含账号或密钥的分阶段诊断信息."""
+    import json
+    import uuid
+
+    trace = uuid.uuid4().hex[:8]
+
+    def diagnostic(stage, **fields):
+        print("[QQDIAG] " + json.dumps(
+            {"version": 1, "trace": trace, "stage": stage, **fields},
+            ensure_ascii=True,
+        ), flush=True)
+
     credential = context.credential
     pool = get_credential_pool(context.request)
     pooled = None
+    pool_items = pool.acquire() if pool is not None else ()
 
-    if pool is not None and credential is not None and credential.musicid:
-        for item in pool.acquire():
+    if credential is not None and credential.musicid:
+        for item in pool_items:
             if item.musicid == credential.musicid:
                 pooled = item
-
                 if item.credential.musickey != credential.musickey:
                     credential = item.credential
-
                 break
 
-    try:
-        return await context.execute_module(
-            SongApi,
-            SongApi.get_song_urls,
-            file_info=file_info,
-            file_type=file_type,
-            credential=credential,
-        )
+    diagnostic(
+        "start",
+        has_account=bool(credential and credential.musicid),
+        has_key=bool(credential and credential.musickey),
+        login_type=credential.login_type if credential else None,
+        has_refresh_key=bool(credential and credential.refresh_key),
+        has_refresh_token=bool(credential and credential.refresh_token),
+        pool_exists=pool is not None,
+        pool_count=len(pool_items),
+        pool_match=pooled is not None,
+        pool_login_type=pooled.credential.login_type if pooled else None,
+        platform=context.platform.value,
+    )
 
+    async def fetch(current, stage):
+        try:
+            result = await context.execute_module(
+                SongApi,
+                SongApi.get_song_urls,
+                file_info=file_info,
+                file_type=file_type,
+                credential=current,
+            )
+        except Exception as exc:
+            code = getattr(exc, "code", None)
+            diagnostic(stage + "_error", error_type=type(exc).__name__,
+                       upstream_code=code if isinstance(code, int) else None)
+            raise
+        diagnostic(stage + "_ok")
+        return result
+
+    try:
+        return await fetch(credential, "initial")
     except CredentialExpiredError:
         if pool is None or pooled is None:
+            diagnostic("refresh_skipped", reason="no_matching_pool_credential")
             raise
-
-        refreshed = await pool.refresh(
-            pooled,
-            context.engine,
-        )
-
+        diagnostic("refresh_start")
+        try:
+            refreshed = await pool.refresh(pooled, context.engine)
+        except Exception as exc:
+            diagnostic("refresh_error", error_type=type(exc).__name__)
+            raise
         if refreshed is None:
+            diagnostic("refresh_failed")
             raise
+        diagnostic("refresh_ok", login_type=refreshed.credential.login_type)
+        return await fetch(refreshed.credential, "retry")
 
-        return await context.execute_module(
-            SongApi,
-            SongApi.get_song_urls,
-            file_info=file_info,
-            file_type=file_type,
-            credential=refreshed.credential,
-        )
+
 @adapter("song", "get_song_urls")
 async def get_song_urls_adapter(context: RouteContext):
     """批量获取歌曲文件链接."""
