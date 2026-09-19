@@ -268,39 +268,8 @@ def _build_qrcode_placeholder(identifier: str, login_type: QRLoginType) -> QR:
 @adapter("login", "check_expired")
 async def check_expired_adapter(context: RouteContext) -> bool:
     """检查登录凭证是否过期."""
-
-    # ① 优先使用当前请求自带的凭证
-    credential = context.credential
-
-    # ② 请求没带凭证时，读取扫码登录后保存到共享池里的凭证
-    if credential is None or credential.musicid <= 0 or not credential.musickey:
-
-        credential_pool = get_credential_pool(context.request)
-
-        if credential_pool is not None:
-
-            for item in credential_pool.acquire():
-
-                usable = await credential_pool.ensure_usable(
-                    item,
-                    context.engine,
-                    context.platform,
-                )
-
-                if usable is not None:
-                    credential = usable.credential
-                    break
-
-    # ③ 连共享池都没有登录凭证，才是真的未登录/过期
-    if credential is None or credential.musicid <= 0 or not credential.musickey:
-        return True
-
-    # ④ 用真正登录后的 Credential 检查
-    return await context.execute_module(
-        "login",
-        "check_expired",
-        credential,
-    )
+    credential = context.credential or Credential()
+    return await context.execute_module("login", "check_expired", credential)
 
 @adapter("login", "refresh_credential")
 async def refresh_credential_adapter(context: RouteContext) -> Credential:
