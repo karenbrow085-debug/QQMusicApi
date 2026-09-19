@@ -323,6 +323,21 @@ class _AMQQCredentialBridge:
                     raise ValueError('invalid')
                 if not credential.get('musicid') or not credential.get('musickey'):
                     raise ValueError('missing')
+                # Web 路由返回下划线字段, Cookie 解析器使用 SDK 别名.
+                # 保留原登录类型 (包括 0), 不根据密钥重新推断.
+                aliases = {
+                    'login_type': 'loginType',
+                    'musickey_create_time': 'musickeyCreateTime',
+                    'key_expires_in': 'keyExpiresIn',
+                    'bind_account_type': 'bindAccountType',
+                    'need_refresh_key_in': 'needRefreshKeyIn',
+                    'encrypt_uin': 'encryptUin',
+                }
+                for name, alias in aliases.items():
+                    if name in credential:
+                        if alias in credential and credential[alias] != credential[name]:
+                            raise ValueError('conflicting credential fields')
+                        credential[alias] = credential[name]
                 allowed = {
                     'musicid', 'musickey', 'openid', 'refresh_token',
                     'access_token', 'expired_at', 'unionid', 'str_musicid',
