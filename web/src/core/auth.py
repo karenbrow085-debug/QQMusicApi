@@ -1,6 +1,7 @@
 """Web 认证辅助函数: 凭证解析与来源标注."""
 
 import logging
+from hmac import compare_digest
 
 from anyio.to_thread import run_sync
 from fastapi import HTTPException, Request
@@ -35,6 +36,26 @@ async def configured_credential_for_api(
         调用方 Cookie 来源的凭证, 或共享凭证池来源的凭证; 只有后者允许写回共享池.
     """
     if credential_has_login(cookie_credential):
+        # 浏览器 Number 不能精确表示超过 2**53-1 的账号 ID.
+        # 仅凭完全相同的密钥和相同浮点表示恢复身份, 保持 CallerCredential 来源.
+        if 2**53 - 1 < cookie_credential.musicid <= 2**63 - 1:
+            pool = get_credential_pool(request)
+            if pool is not None:
+                for item in await run_sync(pool.acquire):
+                    if (
+                        item.musicid != cookie_credential.musicid
+                        and float(item.musicid) == float(cookie_credential.musicid)
+                        and compare_digest(
+                            item.credential.musickey.encode("utf-8"),
+                            cookie_credential.musickey.encode("utf-8"),
+                        )
+                    ):
+                        cookie_credential = cookie_credential.model_copy(update={
+                            "musicid": item.musicid,
+                            "str_musicid": item.credential.str_musicid or str(item.musicid),
+                        })
+                        print('[QQDIAG] {"stage":"identity_repaired","source":"matching_key"}', flush=True)
+                        break
         logger.debug("API %s 使用 Cookie 凭证 (musicid: %s)", api_key, cookie_credential.musicid)
         return CallerCredential(credential=cookie_credential)
 
@@ -77,8 +98,20 @@ def credential_from_cookies(request: Request) -> Credential:
     refresh_key = cookies.get("refresh_key")
 
     if musicid and musickey:
+        numeric_musicid = _parse_cookie_int(musicid)
+        if (
+            2**53 - 1 < numeric_musicid <= 2**63 - 1
+            and str_musicid
+            and str_musicid.isascii()
+            and str_musicid.isdecimal()
+            and 0 < len(str_musicid) <= 20
+        ):
+            exact_musicid = int(str_musicid)
+            if exact_musicid != numeric_musicid and float(exact_musicid) == float(numeric_musicid):
+                numeric_musicid = exact_musicid
+                print('[QQDIAG] {"stage":"identity_repaired","source":"str_musicid"}', flush=True)
         return Credential(
-            musicid=_parse_cookie_int(musicid),
+            musicid=numeric_musicid,
             musickey=musickey,
             openid=openid or "",
             refresh_token=refresh_token or "",
