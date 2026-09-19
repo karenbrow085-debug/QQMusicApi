@@ -216,7 +216,7 @@ def create_app() -> FastAPI:
     _configure_cors(app)
 
     @app.exception_handler(BaseApiException)
-async def _handle_base_api_exception(
+    async def _handle_base_api_exception(
     _request: Request,
     exc: BaseApiException,
 ) -> JSONResponse:
