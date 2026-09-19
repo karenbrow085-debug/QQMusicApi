@@ -83,7 +83,7 @@ class CredentialPool:
         """同步账号种子到池."""
         self._store.sync_accounts(accounts)
 
-        def close(self) -> None:
+    def close(self) -> None:
         """关闭底层存储."""
         self._store.close()
 
