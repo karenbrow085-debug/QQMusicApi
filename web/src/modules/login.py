@@ -24,7 +24,8 @@ from qqmusic_api.models.login import (
 from ..routing.adapter_registry import adapter
 from ..routing.params import path_enum_value
 from ..routing.route_types import RouteContext
-
+from ..core.credential_pool import CredentialPool
+from ..core.deps import get_credential_pool
 
 class WebQRLoginType(str, Enum):
     """Web 层支持的二维码登录类型."""
