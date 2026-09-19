@@ -279,7 +279,86 @@ def create_app() -> FastAPI:
 </html>"""
         )
 
-    include_routes(app, ROUTES)
+        include_routes(app, ROUTES)
     _patch_openapi_schema_descriptions(app)
 
+    return app
+
+
+import json as _am_json
+import re as _am_re
+from urllib.parse import unquote as _am_unquote
+from starlette.middleware.cors import CORSMiddleware as _AMCors
+from starlette.responses import JSONResponse as _AMJson
+
+
+class _AMQQCredentialBridge:
+    """仅将当前请求显式携带的凭证转换为上游已有 Cookie 认证。"""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] != 'http':
+            return await self.app(scope, receive, send)
+        header_values = dict(scope.get('headers', []))
+        packed = header_values.get(b'x-qq-credential')
+        if packed is not None:
+            try:
+                if len(packed) > 24000:
+                    raise ValueError('oversized')
+                credential = _am_json.loads(_am_unquote(packed.decode('ascii')))
+                if not isinstance(credential, dict):
+                    raise ValueError('invalid')
+                if not credential.get('musicid') or not credential.get('musickey'):
+                    raise ValueError('missing')
+                allowed = {
+                    'musicid', 'musickey', 'openid', 'refresh_token',
+                    'access_token', 'expired_at', 'unionid', 'str_musicid',
+                    'refresh_key', 'encryptUin', 'loginType', 'musickeyCreateTime',
+                    'keyExpiresIn', 'first_login', 'bindAccountType', 'needRefreshKeyIn',
+                }
+                pairs = []
+                for key in allowed:
+                    value = credential.get(key)
+                    if value is None or value == '':
+                        continue
+                    if type(value) not in (str, int):
+                        raise ValueError('invalid value')
+                    value = str(value)
+                    if len(value) > 8192 or not _am_re.fullmatch(r'[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+', value):
+                        raise ValueError('invalid cookie')
+                    pairs.append(key + '=' + value)
+                scope = dict(scope)
+                scope['headers'] = [
+                    (key, value) for key, value in scope.get('headers', [])
+                    if key.lower() not in (b'cookie', b'x-qq-credential')
+                ] + [(b'cookie', '; '.join(pairs).encode('ascii'))]
+            except (ValueError, TypeError, UnicodeError):
+                response = _AMJson({'code': -1, 'msg': 'QQ 登录凭证格式无效，请重新扫码'}, status_code=400)
+                return await response(scope, receive, send)
+        async def send_private(message):
+            if packed is not None and message['type'] == 'http.response.start':
+                message = dict(message)
+                message['headers'] = [(k, v) for k, v in message.get('headers', []) if k.lower() != b'cache-control'] + [(b'cache-control', b'no-store')]
+            await send(message)
+        return await self.app(scope, receive, send_private)
+
+
+_am_original_create_app = create_app
+
+
+def create_app():
+    app = _am_original_create_app()
+    app.add_middleware(_AMQQCredentialBridge)
+    # 状态栏显式传入自己的凭证，不使用跨站浏览器 Cookie。
+    app.add_middleware(
+        _AMCors,
+        allow_origins=['*'],
+        allow_credentials=False,
+        allow_methods=['GET'],
+        allow_headers=['X-QQ-Credential', 'Content-Type'],
+        max_age=600,
+    )
+    return app
     return app
