@@ -1,13 +1,17 @@
 """登录模块 Web 路由适配."""
 
+import asyncio
 import base64
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
-from qqmusic_api import Credential
+from qqmusic_api import Credential, Platform
+from qqmusic_api.core.engine import RequestEngine, RequestScope, ScopedRequestExecutor
+from qqmusic_api.modules.login import LoginApi
 from qqmusic_api.models.login import (
     QR,
     PhoneAuthCodeResult,
@@ -27,11 +31,15 @@ class WebQRLoginType(str, Enum):
 
     QQ = "qq"
     WX = "wx"
+    MOBILE = "mobile"
 
 
-WEB_QR_LOGIN_TYPES = {WebQRLoginType.QQ: QRLoginType.QQ, WebQRLoginType.WX: QRLoginType.WX}
-WEB_QR_LOGIN_TYPE_DESCRIPTION = "二维码登录类型. 当前 Web 层仅支持 `qq` / `wx`."
-
+WEB_QR_LOGIN_TYPES = {
+    WebQRLoginType.QQ: QRLoginType.QQ,
+    WebQRLoginType.WX: QRLoginType.WX,
+    WebQRLoginType.MOBILE: QRLoginType.MOBILE,
+}
+WEB_QR_LOGIN_TYPE_DESCRIPTION = "二维码登录类型. 支持 `qq` / `wx` / `mobile`."
 
 class QRCodeData(BaseModel):
     """二维码响应数据."""
@@ -117,7 +125,51 @@ class PhoneAuthorizeRequest(PhoneTargetRequest):
 
     auth_code: str = Field(description="短信验证码 (字符串, 保留前导零).")
 
+@dataclass
+class _MobileQRSession:
+    qrcode: QR
+    result: QRLoginResult
+    task: asyncio.Task[None] | None = None
+    error: str | None = None
 
+
+_MOBILE_QR_SESSIONS: dict[str, _MobileQRSession] = {}
+
+
+async def _watch_mobile_qrcode(
+    engine: RequestEngine,
+    qrcode: QR,
+) -> None:
+    """
+    在服务器后台保持 QQ音乐 MQTT 连接，
+    并把最新扫码状态保存起来，供 HTTP status 接口查询。
+    """
+
+    scope = RequestScope(
+        credential=Credential(),
+        platform=Platform.ANDROID,
+    )
+
+    executor = ScopedRequestExecutor(engine, scope)
+    login_api = LoginApi(executor)
+
+    try:
+        async for result in login_api.checking_mobile_qrcode(qrcode):
+            session = _MOBILE_QR_SESSIONS.get(qrcode.identifier)
+
+            if session is None:
+                return
+
+            session.result = result
+
+    except asyncio.CancelledError:
+        raise
+
+    except Exception as exc:
+        session = _MOBILE_QR_SESSIONS.get(qrcode.identifier)
+
+        if session is not None:
+            session.error = f"{type(exc).__name__}: {exc}"
 QR_CODE_EVENT_CODES = {
     QRCodeLoginEvents.DONE: 0,
     QRCodeLoginEvents.SCAN: 1,
@@ -214,18 +266,96 @@ async def refresh_credential_adapter(context: RouteContext) -> Credential:
 @adapter("login", "qrcode")
 async def qrcode_adapter(context: RouteContext) -> QRCodeData:
     """获取登录二维码."""
-    login_type = _validate_web_qr_login_type(context.params["login_type"])
-    qrcode = await context.execute_module("login", "get_qrcode", login_type)
+
+    login_type = _validate_web_qr_login_type(
+        context.params["login_type"]
+    )
+
+    qrcode = await context.execute_module(
+        "login",
+        "get_qrcode",
+        login_type,
+    )
+
+    if login_type == QRLoginType.MOBILE:
+
+        old_session = _MOBILE_QR_SESSIONS.get(
+            qrcode.identifier
+        )
+
+        if (
+            old_session is not None
+            and old_session.task is not None
+            and not old_session.task.done()
+        ):
+            old_session.task.cancel()
+
+        session = _MobileQRSession(
+            qrcode=qrcode,
+            result=QRLoginResult(
+                event=QRCodeLoginEvents.SCAN
+            ),
+        )
+
+        _MOBILE_QR_SESSIONS[qrcode.identifier] = session
+
+        session.task = asyncio.create_task(
+            _watch_mobile_qrcode(
+                context.engine,
+                qrcode,
+            )
+        )
+
     return _serialize_qrcode(qrcode)
 
-
 @adapter("login", "qrcode_status")
-async def qrcode_status_adapter(context: RouteContext) -> QRCodeStatusData:
+async def qrcode_status_adapter(
+    context: RouteContext,
+) -> QRCodeStatusData:
     """检查二维码登录状态."""
-    login_type = _validate_web_qr_login_type(context.params["login_type"])
-    qrcode = _build_qrcode_placeholder(context.params["identifier"], login_type)
-    result = await context.execute_module("login", "check_qrcode", qrcode)
-    return _serialize_qrcode_status(result, qrcode)
+
+    login_type = _validate_web_qr_login_type(
+        context.params["login_type"]
+    )
+
+    identifier = context.params["identifier"]
+
+    if login_type == QRLoginType.MOBILE:
+
+        session = _MOBILE_QR_SESSIONS.get(identifier)
+
+        if session is None:
+            raise HTTPException(
+                status_code=404,
+                detail="找不到该 QQ音乐扫码会话，请重新生成二维码。",
+            )
+
+        if session.error:
+            raise HTTPException(
+                status_code=502,
+                detail=f"QQ音乐扫码监听失败: {session.error}",
+            )
+
+        return _serialize_qrcode_status(
+            session.result,
+            session.qrcode,
+        )
+
+    qrcode = _build_qrcode_placeholder(
+        identifier,
+        login_type,
+    )
+
+    result = await context.execute_module(
+        "login",
+        "check_qrcode",
+        qrcode,
+    )
+
+    return _serialize_qrcode_status(
+        result,
+        qrcode,
+    )
 
 
 @adapter("login", "phone_authcode")
