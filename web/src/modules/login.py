@@ -180,16 +180,16 @@ async def _watch_mobile_qrcode(
     except asyncio.CancelledError:
         raise
 
-    except Exception as exc:
-    print(
-        f"[QQ MOBILE QR ERROR] {type(exc).__name__}: {exc}",
-        flush=True,
-    )
+        except Exception as exc:
+        print(
+            f"[QQ MOBILE QR ERROR] {type(exc).__name__}: {exc}",
+            flush=True,
+        )
 
-    session = _MOBILE_QR_SESSIONS.get(qrcode.identifier)
+        session = _MOBILE_QR_SESSIONS.get(qrcode.identifier)
 
-    if session is not None:
-        session.error = f"{type(exc).__name__}: {exc}"
+        if session is not None:
+            session.error = f"{type(exc).__name__}: {exc}"
 QR_CODE_EVENT_CODES = {
     QRCodeLoginEvents.DONE: 0,
     QRCodeLoginEvents.SCAN: 1,
