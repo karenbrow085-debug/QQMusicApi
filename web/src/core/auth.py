@@ -65,6 +65,7 @@ async def configured_credential_for_api(
 def credential_from_cookies(request: Request) -> Credential:
     """从请求 Cookie 提取 Credential."""
     cookies = request.cookies
+
     musicid = cookies.get("musicid")
     musickey = cookies.get("musickey")
     openid = cookies.get("openid")
@@ -74,6 +75,7 @@ def credential_from_cookies(request: Request) -> Credential:
     unionid = cookies.get("unionid")
     str_musicid = cookies.get("str_musicid")
     refresh_key = cookies.get("refresh_key")
+
     if musicid and musickey:
         return Credential(
             musicid=_parse_cookie_int(musicid),
@@ -85,10 +87,54 @@ def credential_from_cookies(request: Request) -> Credential:
             unionid=unionid or "",
             str_musicid=str_musicid or musicid,
             refresh_key=refresh_key or "",
+
+            # 保留扫码登录返回的完整凭证信息
+            musickeyCreateTime=_parse_cookie_int(
+                cookies.get("musickeyCreateTime") or "0"
+            ),
+            keyExpiresIn=_parse_cookie_int(
+                cookies.get("keyExpiresIn") or "0"
+            ),
+            first_login=_parse_cookie_int(
+                cookies.get("first_login") or "0"
+            ),
+            bindAccountType=_parse_cookie_int(
+                cookies.get("bindAccountType") or "0"
+            ),
+            needRefreshKeyIn=_parse_cookie_int(
+                cookies.get("needRefreshKeyIn") or "0"
+            ),
+            encryptUin=cookies.get("encryptUin") or "",
+            **(
+                {
+                    "loginType": _parse_cookie_int(
+                        cookies["loginType"]
+                    )
+                }
+                if cookies.get("loginType")
+                else {}
+            ),
         )
 
-    values = (openid, refresh_token, access_token, expired_at, unionid, str_musicid, refresh_key, musicid, musickey)
-    if any(value is not None for value in values) and not (musicid and musickey):
-        raise HTTPException(status_code=422, detail="Cookie musicid 与 musickey 必须同时提供")
+    values = (
+        openid,
+        refresh_token,
+        access_token,
+        expired_at,
+        unionid,
+        str_musicid,
+        refresh_key,
+        musicid,
+        musickey,
+    )
 
+    if any(value is not None for value in values) and not (
+        musicid and musickey
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Cookie musicid 与 musickey 必须同时提供",
+        )
+
+    return Credential()
     return Credential()
