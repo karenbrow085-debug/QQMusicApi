@@ -279,7 +279,7 @@ def create_app() -> FastAPI:
 </html>"""
         )
 
-        include_routes(app, ROUTES)
+    include_routes(app, ROUTES)
     _patch_openapi_schema_descriptions(app)
 
     return app
