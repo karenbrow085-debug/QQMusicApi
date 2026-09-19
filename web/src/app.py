@@ -216,13 +216,38 @@ def create_app() -> FastAPI:
     _configure_cors(app)
 
     @app.exception_handler(BaseApiException)
-    async def _handle_base_api_exception(_request: Request, exc: BaseApiException) -> JSONResponse:
-        status_code = _base_api_exception_status_code(exc)
-        if status_code < 500:
-            return error_response(status_code=status_code, msg=str(exc))
-        logger.error("上游请求失败: %d", status_code, exc_info=exc)
-        return error_response(status_code=status_code, msg=_HTTP_ERROR_MESSAGES.get(status_code, "上游服务异常"))
+async def _handle_base_api_exception(
+    _request: Request,
+    exc: BaseApiException,
+) -> JSONResponse:
+    status_code = _base_api_exception_status_code(exc)
 
+    if status_code < 500:
+        logger.error(
+            "[QQ API ERROR] path=%s status=%d type=%s msg=%s",
+            _request.url.path,
+            status_code,
+            type(exc).__name__,
+            str(exc),
+        )
+        return error_response(
+            status_code=status_code,
+            msg=str(exc),
+        )
+
+    logger.error(
+        "上游请求失败: %d",
+        status_code,
+        exc_info=exc,
+    )
+
+    return error_response(
+        status_code=status_code,
+        msg=_HTTP_ERROR_MESSAGES.get(
+            status_code,
+            "上游服务异常",
+        ),
+    )
     @app.exception_handler(Exception)
     async def _handle_unexpected_exception(_request: Request, exc: Exception) -> JSONResponse:
         logger.error("未捕获异常", exc_info=exc)
