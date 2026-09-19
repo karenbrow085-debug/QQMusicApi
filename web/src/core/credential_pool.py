@@ -83,30 +83,31 @@ class CredentialPool:
         """同步账号种子到池."""
         self._store.sync_accounts(accounts)
 
-    def close(self) -> None:
+        def close(self) -> None:
         """关闭底层存储."""
         self._store.close()
 
     async def seed(self, credential: Credential) -> None:
-    """保存扫码登录得到的 Credential 到共享凭证池."""
+        """保存扫码登录得到的 Credential 到共享凭证池."""
+        if not credential_has_login(credential):
+            raise ValueError("Credential 缺少 musicid 或 musickey")
 
-    if not credential_has_login(credential):
-        raise ValueError("Credential 缺少 musicid 或 musickey")
+        await run_sync(self._store.seed, credential)
 
-    await run_sync(self._store.seed, credential)
+        logger.info(
+            "扫码登录凭证已保存到共享池: musicid %s",
+            credential.musicid,
+        )
 
-    logger.info(
-        "扫码登录凭证已保存到共享池: musicid %s",
-        credential.musicid,
-    )
-    
     def acquire(self) -> tuple[PoolCredential, ...]:
         """按随机顺序返回池内有效凭证快照."""
         return tuple(
-            PoolCredential(credential=credential, musicid=credential.musicid)
+            PoolCredential(
+                credential=credential,
+                musicid=credential.musicid,
+            )
             for credential in self._store.random_credentials()
         )
-
     async def ensure_usable(
         self,
         item: PoolCredential,
