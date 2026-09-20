@@ -47,7 +47,7 @@ ROUTES: tuple[WebRoute, ...] = (
         auth=AuthPolicy.COOKIE_OR_DEFAULT,
     ),
     R(
-        SonglistApi.get_detail,
-        "/songlist/{songlist_id}/detail",
-    ),
+    SonglistApi.get_detail,
+    "/songlist/{songlist_id}/detail",
+    auth=AuthPolicy.OPTIONAL,
 )
